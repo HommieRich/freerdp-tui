@@ -1,0 +1,3 @@
+* FreeRDP的Tui界面，用于linux-thinclient
+
+  freerdp 的 TUI 界面，使用 bash shell 编写
