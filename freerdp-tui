@@ -1,0 +1,291 @@
+#!/bin/sh
+
+set -u
+
+FREERDP_CMD="wlfreerdp"
+FREERDP_OUTPUT=`mktemp`
+[ $? -eq 0 ] || exit 1
+
+# 清空文件
+function truncate_file_to_zero() {
+    truncate -s 0 $1 || return 1
+    return 0
+}
+
+# 检查文件夹是否存在
+function check_directory_is_exist() {
+    [ ! -e $1 ] && return 1
+    return 0
+}
+
+# 检查文件是否存在
+function check_file_is_exist() {
+    [ -z $1 ] && return 1
+    [ ! -e $1 ] || return 1
+    return 0
+}
+
+
+# 用于临时存储输入返回值
+INPUT=`mktemp`
+[ $? -eq 0 ] || exit 1
+# 确保文件为空
+truncate_file_to_zero $INPUT || exit 1
+
+# 数据文件夹
+DATA_DIR="$HOME/.freerdp-tui/"
+# 检查数据文件夹是否存在
+# 如果不存在则创建它
+check_directory_is_exist $DATA_DIR || mkdir -p $DATA_DIR || exit 1
+
+# 存放连接的数据库
+CONNECTION_DATABASE=$DATA_DIR/connection
+# 检查连接数据库是否存在
+# 如果不存在则创建它
+check_file_is_exist $CONNECTION_DATABASE || touch $CONNECTION_DATABASE || exit 1
+
+# 接管信号
+trap "rm $INPUT; exit 1" SIGHUP SIGINT SIGTERM
+
+
+# 检查别名
+function check_aliasname() {
+    set +u
+    local aliasname=$1
+    # 检查别名是否合法
+    [ -z $aliasname ] && return 1
+    set -u
+    if [[ $aliasname =~ ^[a-zA-Z0-9_\-]+$ ]]
+    then
+	return 0
+    else
+	return 1
+    fi
+    return 0
+}
+
+# 检查主机名
+function check_hostname() {
+    set +u
+    local hostname=$1
+    # 检查主机名是否合法
+    [ -z $hostname ] && return 1
+    set -u
+    if [[ $hostname =~ ^[a-zA-Z0-9.:]+$ ]]
+    then
+	return 0
+    else
+	return 1
+    fi
+    return 0
+}
+
+# 检查端口号
+function check_port_number() {
+    set +u
+    local port=$1
+    [ -z $port ] && return 1
+    set -u
+    # 检查端口是否合法
+    if ! [[ $port =~ ^[0-9]+$ ]]
+    then
+	return 1
+    fi
+    if [ $port -gt 0 ] && [ $port -lt 65536 ]
+    then
+	return 0
+    else
+	return 1
+    fi
+    return 0
+}
+
+# 检查用户名
+function check_user_name() {
+    echo "need imp"
+    return 1
+}
+
+# 将数据插入数据库
+function insert_line_to_connection_database() {
+    local target_aliasname="$1"
+    local target_hostname="$2"
+    local target_port="$3"
+    local target_username="$4"
+    local target_password="$5"
+    # 如果有重复的项目则写入失败
+    if [ `grep ^\$target_aliasname $CONNECTION_DATABASE | wc -l` -ne 0 ]
+    then
+	[ $? -eq 0 ] || return 1
+	return 1
+    else
+	[ $? -eq 0 ] || return 1
+	printf "%s\t%s\t%s\t%s\t%s\n" \
+	       $target_aliasname \
+	       $target_hostname \
+	       $target_port \
+	       $target_username \
+	       $target_password >> $CONNECTION_DATABASE
+	[ $? -eq 0 ] || return 1
+    fi
+    return 0
+}
+
+# 主菜单
+function main_menu() {
+    dialog --clear --title "主菜单" \
+	   --menu "选择选项:" 30 50 6 \
+	   "使用连接" "连接到列表中的连接" \
+	   "添加连接" "添加连接到列表" \
+	   "删除连接" "删除列表中选定的连接" \
+	   "开机默认" "设置开机默认使用的连接" \
+	   "开机自启" "设置开机自动启动" \
+	   "退出程序" "退出当前程序" 2> $INPUT
+    return $?
+}
+
+# 从菜单选择目标主机并连接
+function select_and_connect_to_a_target() {
+    # 别名 用户名@主机名:端口
+    all_items=`awk '{print $1 "\t" $4"@"$2":"$3 }' $CONNECTION_DATABASE \
+     | xargs`
+    dialog --clear --title "连接到一个主机" \
+	   --menu "选择连接:" 30 50 6 \
+	   $all_items 2> $INPUT
+    [ $? -eq 0 ] || return 1
+    aliasname=`< $INPUT`
+    [ $? -eq 0 ] || return 1
+    line=`grep ^$aliasname $CONNECTION_DATABASE`
+    [ $? -eq 0 ] || return 1    
+    target_aliasname=`awk '{printf $1}' $CONNECTION_DATABASE`
+    [ $? -eq 0 ] || return 1    
+    target_hostname=`awk '{printf $2}' $CONNECTION_DATABASE`
+    [ $? -eq 0 ] || return 1    
+    target_port=`awk '{printf $3}' $CONNECTION_DATABASE`
+    [ $? -eq 0 ] || return 1    
+    target_username=`awk '{printf $4}' $CONNECTION_DATABASE`
+    [ $? -eq 0 ] || return 1    
+    target_password=`awk '{printf $5}' $CONNECTION_DATABASE | base64 -d`
+    [ $? -eq 0 ] || return 1    
+    $FREERDP_CMD /v:$target_hostname:$target_port /u:$target_username /p:$target_password
+    [ $? -eq 0 ] || dialog --pause "连接会话时发生了错误" 30 50 3 || return 1
+}
+
+
+# 添加连接
+function add_connection() {
+    while true
+    do
+	dialog --clear --inputbox "请输入别名:" 20 50 2> $INPUT
+	[ $? -eq 1 ] && return 1
+	target_aliasname=`< $INPUT`
+	[ $? -eq 0 ] || continue
+	check_aliasname $target_aliasname || continue
+	[ $? -eq 0 ] && break
+    done
+    
+    while true
+    do
+	dialog --inputbox "请输入目标主机名或IP地址:" 20 50 2> $INPUT
+	[ $? -eq 1 ] && return 1
+	target_hostname=`< $INPUT`
+	[ $? -eq 0 ] || continue
+	check_hostname $target_hostname || continue
+	[ $? -eq 0 ] && break
+    done
+    while true
+    do
+	dialog --inputbox "请输入目标端口:" 20 50 3389 2> $INPUT
+	[ $? -eq 1 ] && return 1
+	target_port=`< $INPUT`
+	[ $? -eq 0 ] || continue
+	check_port_number $target_port || continue
+	[ $? -eq 0 ] && break
+    done
+
+    while true
+    do
+	dialog --inputbox "请输入用户名:" 20 50 2> $INPUT
+	[ $? -eq 1 ] && return 1	
+	target_username=`< $INPUT`
+	[ $? -eq 0 ] || continue
+	#    check_user_name $target_username || continue
+	[ $? -eq 0 ] && break
+    done
+
+    while true
+    do
+	# 需要更安全的密码处理方式
+	export TMP="/tmp/.sectmp-`id -u`/"
+	[ $? -eq 0 ] || continue
+	# 如果不存在则创建
+	check_directory_is_exist $TMP || mkdir -p $TMP || exit 1
+	# 用于安全输入的文件
+	SEC_INPUT=`mktemp`
+	[ $? -eq 0 ] || exit 1
+	unset TMP
+	dialog --insecure --passwordbox "请输入密码:" 20 50 2> $SEC_INPUT
+	[ $? -eq 0 ] || continue
+	target_password=`cat $SEC_INPUT | base64`
+	[ $? -eq 0 ] || continue
+	rm $SEC_INPUT || exit 1
+	unset SEC_INPUT
+	[ $? -eq 0 ] && break
+    done
+    sleep 5
+
+    # 将记录存入数据库
+    insert_line_to_connection_database \
+	$target_aliasname \
+	$target_hostname \
+	$target_port \
+	$target_username \
+	$target_password >> $CONNECTION_DATABASE
+    [ $? -eq 0 ] || return 1
+
+    unset target_hostname 
+    unset target_port
+    unset target_username
+    unset target_password
+}
+
+function delete_conection() {
+        # 别名 用户名@主机名:端口
+    all_items=`awk '{print $1 "\t" $4"@"$2":"$3 }' $CONNECTION_DATABASE \
+     | xargs`
+    dialog --clear --title "连接到一个主机" \
+	   --menu "选择连接:" 30 50 6 \
+	   $all_items 2> $INPUT
+    [ $? -eq 0 ] || return 1
+    aliasname=`< $INPUT`
+    [ $? -eq 0 ] || return 1
+    line=`grep ^$aliasname $CONNECTION_DATABASE`
+    target_aliasname=`awk '{printf $1}' $CONNECTION_DATABASE`
+    [ $? -eq 0 ] || dialog --pause "删除会话时发生了错误" 30 50 3 || return 1
+}
+
+while true
+do
+	main_menu
+	menu_select=`< $INPUT`
+	case $menu_select in
+	    "使用连接")
+		select_and_connect_to_a_target
+		;;
+	    "添加连接")
+		add_connection
+		;;
+	    "退出程序")
+		clear
+		break
+		;;
+	    *)
+		clear
+		printf "发生错误\n"
+		exit 1
+		;;
+	esac
+done
+
+
+[ -f $INPUT ] && rm $INPUT
