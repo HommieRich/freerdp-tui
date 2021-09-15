@@ -167,7 +167,7 @@ function select_and_connect_to_a_target() {
     [ $? -eq 0 ] || return 1    
     target_password=`awk '{printf $5}' $CONNECTION_DATABASE | base64 -d`
     [ $? -eq 0 ] || return 1    
-    $FREERDP_CMD /v:$target_hostname:$target_port /u:$target_username /p:$target_password
+    $FREERDP_CMD /v:$target_hostname:$target_port /u:$target_username /p:$target_password /f
     [ $? -eq 0 ] || dialog --pause "连接会话时发生了错误" 30 50 3 || return 1
 }
 
