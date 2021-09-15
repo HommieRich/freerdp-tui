@@ -2,7 +2,7 @@
 
 set -u
 
-FREERDP_CMD="wlfreerdp"
+FREERDP_CMD="xfreerdp"
 FREERDP_OUTPUT=`mktemp`
 [ $? -eq 0 ] || exit 1
 
